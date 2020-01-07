@@ -3,6 +3,8 @@
 #![no_main]
 #![no_std]
 
+use embedded_hal::blocking::i2c::{Write};
+
 extern crate panic_semihosting;
 
 use cortex_m_rt::entry;
@@ -34,15 +36,7 @@ fn main() -> ! {
 
     const LP5562_ADDR: u8 = 0x30;
 
-    const LP5562_REG_ENABLE: u8 = 0x00;
-    const LP5562_RUN_ENG2: u8 = 0x08;
-    const LP5562_REG_ENG_SEL: u8 = 0x70;
-
-    // BRIGHTNESS Registers
-    const LP5562_REG_R_PWM: u8 = 0x01;
-    // const LP5562_REG_G_PWM: u8 = 0x03;
-    // const LP5562_REG_B_PWM: u8 = 0x02;
-    // const LP5562_REG_W_PWM: u8 = 0x0E;
+    let led_driver = Lp5562::new(AddrSel::Addr00);
 
     // Set EN High
     lp5562_en.set_high().unwrap();
@@ -50,23 +44,141 @@ fn main() -> ! {
     // 1 ms delay
     delay.delay_ms(100_u16);
 
-    buffer = [LP5562_REG_ENABLE, 0b01000000];
+    buffer = [Register::Enable as u8, 0b01000000];
     // chip_en = 1
     i2c.write(LP5562_ADDR, &mut buffer).unwrap();
+
+    led_driver.init_direct_pwm(&mut i2c).unwrap();
     
     // 1 ms delay
     delay.delay_ms(10_u16);
-    
-    // enable internal clock 
-    buffer = [LP5562_RUN_ENG2, 0b00000001];
-    i2c.write(LP5562_ADDR, &mut buffer).unwrap();
-    // configure all LED outputs to be ontrolled from i2c registers
-    buffer = [LP5562_REG_ENG_SEL, 0b00000000];
-    i2c.write(LP5562_ADDR, &mut buffer).unwrap();
-    // B driver PWM 50% duty cycle
-    buffer = [LP5562_REG_R_PWM, 0b11000000];
-    i2c.write(LP5562_ADDR, &mut buffer).unwrap();
+
+    // led_driver.set_led_current(&mut i2c, LED::Blue, 0x00).unwrap();
+    led_driver.set_led_pwm(&mut i2c, LED::Blue, 0x0F).unwrap();
 
     loop {
     }
+}
+
+pub struct Lp5562 {
+    addr: u8,
+}
+
+pub enum AddrSel {
+    Addr00 = 0x60,
+    Addr01 = 0x62,
+    Addr10 = 0x64,
+    Addr11 = 0x66,
+}
+
+pub enum LED {
+    Blue,
+    Green,
+    Red,
+    White,
+}
+
+impl Lp5562 {
+    pub fn new(addrsel: AddrSel) -> Lp5562 {
+        Lp5562 {
+            addr: (addrsel as u8) >> 1, // Shift right by one for 7-bit Address
+        }
+    }
+
+    pub fn write_addr<I2C>(
+        &self,
+        i2c: &mut I2C,
+        addr: Register,
+        value: u8,
+    ) -> Result<(), <I2C as Write>::Error>
+    where
+        I2C: Write,
+    {
+        i2c.write(self.addr, &[addr as u8, value])?;
+        Ok(())
+    }
+
+    pub fn set_led_pwm<I2C>(
+        &self,
+        i2c: &mut I2C,
+        led: LED,
+        value: u8,
+    ) -> Result<(), <I2C as Write>::Error>
+    where
+        I2C: Write,
+    {
+        match led {
+            LED::Blue => self.write_addr(i2c, Register::Bpwm, value)?,
+            LED::Green => self.write_addr(i2c, Register::Gpwm, value)?,
+            LED::Red => self.write_addr(i2c, Register::Rpwm, value)?,
+            LED::White => self.write_addr(i2c, Register::Wpwm, value)?,
+        }
+
+        Ok(())
+    }
+
+    pub fn set_led_current<I2C>(
+        &self,
+        i2c: &mut I2C,
+        led: LED,
+        value: u8,
+    ) -> Result<(), <I2C as Write>::Error>
+    where
+        I2C: Write,
+    {
+        match led {
+            LED::Blue => self.write_addr(i2c, Register::Bcurrent, value)?,
+            LED::Green => self.write_addr(i2c, Register::Gcurrent, value)?,
+            LED::Red => self.write_addr(i2c, Register::Rcurrent, value)?,
+            LED::White => self.write_addr(i2c, Register::Wcurrent, value)?,
+        }
+
+        Ok(())
+    }
+
+    pub fn init_direct_pwm<I2C>(
+        &self,
+        i2c: &mut I2C,
+    ) -> Result<(), <I2C as Write>::Error>
+    where
+        I2C: Write,
+    {
+        // chip enable
+        self.write_addr(i2c, Register::Enable, 0b01000000)?;
+        // enable internal clock 
+        self.write_addr(i2c, Register::Config, 0b00000001)?;
+        // configure all LED outputs to be ontrolled from i2c registers
+        self.write_addr(i2c, Register::LedMap, 0b00000000)?;
+
+        // Set all LED PWM to zero
+        self.write_addr(i2c, Register::Bpwm, 0x00)?;
+        self.write_addr(i2c, Register::Gpwm, 0x00)?;
+        self.write_addr(i2c, Register::Rpwm, 0x00)?;
+        self.write_addr(i2c, Register::Wpwm, 0x00)?;
+
+        Ok(())
+    }
+}
+
+pub enum Register {
+    Enable = 0x00,
+    OpMode = 0x01,
+    Bpwm = 0x02,
+    Gpwm = 0x03,
+    Rpwm = 0x04,
+    Bcurrent = 0x05,
+    Gcurrent = 0x06,
+    Rcurrent = 0x07,
+    Config = 0x08,
+    Eng1Pc = 0x09,
+    Eng2Pc = 0x0A,
+    Eng3Pc = 0x0B,
+    Status = 0x0C,
+    Reset = 0x0D,
+    Wpwm = 0x0E,
+    Wcurrent = 0x0F,
+    ProgMemEng1Base = 0x10,
+    ProgMemEng2Base = 0x30,
+    ProgMemEng3Base = 0x50,
+    LedMap = 0x70,
 }
