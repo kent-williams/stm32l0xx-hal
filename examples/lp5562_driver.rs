@@ -32,9 +32,9 @@ fn main() -> ! {
 
     let mut i2c = dp.I2C1.i2c(sda, scl, 100.khz(), &mut rcc);
 
-    let mut buffer: [u8; 2];// = [0u8; 2];
+    // let mut buffer: [u8; 2];// = [0u8; 2];
 
-    const LP5562_ADDR: u8 = 0x30;
+    // const LP5562_ADDR: u8 = 0x30;
 
     let led_driver = Lp5562::new(AddrSel::Addr00);
 
@@ -44,17 +44,17 @@ fn main() -> ! {
     // 1 ms delay
     delay.delay_ms(100_u16);
 
-    buffer = [Register::Enable as u8, 0b01000000];
+    // buffer = [Register::Enable as u8, 0b01000000];
     // chip_en = 1
-    i2c.write(LP5562_ADDR, &mut buffer).unwrap();
+    // i2c.write(LP5562_ADDR, &mut buffer).unwrap();
 
-    led_driver.init_direct_pwm(&mut i2c).unwrap();
-    
+   let _s = led_driver.init_direct_pwm(&mut i2c);
+
     // 1 ms delay
     delay.delay_ms(10_u16);
 
     // led_driver.set_led_current(&mut i2c, LED::Blue, 0x00).unwrap();
-    led_driver.set_led_pwm(&mut i2c, LED::Blue, 0x0F).unwrap();
+    let _s = led_driver.set_led_pwm(&mut i2c, LED::Red, 0x0F);
 
     loop {
     }
@@ -78,6 +78,16 @@ pub enum LED {
     White,
 }
 
+pub enum Error<I> {
+    I2c(I),
+}
+
+// impl fmt::Debug for Error {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(f, "({:?}, {:?})", self.longitude, self.latitude)
+//     }
+// }
+
 impl Lp5562 {
     pub fn new(addrsel: AddrSel) -> Lp5562 {
         Lp5562 {
@@ -85,27 +95,27 @@ impl Lp5562 {
         }
     }
 
-    pub fn write_addr<I2C>(
+    pub fn write_addr<I>(
         &self,
-        i2c: &mut I2C,
+        i2c: &mut I,
         addr: Register,
         value: u8,
-    ) -> Result<(), <I2C as Write>::Error>
+    ) -> Result<(), Error<I::Error>>
     where
-        I2C: Write,
+        I: Write,
     {
-        i2c.write(self.addr, &[addr as u8, value])?;
-        Ok(())
+        i2c.write(self.addr, &[addr as u8, value])
+            .map_err(|e| Error::I2c(e))
     }
 
-    pub fn set_led_pwm<I2C>(
+    pub fn set_led_pwm<I>(
         &self,
-        i2c: &mut I2C,
+        i2c: &mut I,
         led: LED,
         value: u8,
-    ) -> Result<(), <I2C as Write>::Error>
+    ) -> Result<(), Error<I::Error>>
     where
-        I2C: Write,
+        I: Write,
     {
         match led {
             LED::Blue => self.write_addr(i2c, Register::Bpwm, value)?,
@@ -117,14 +127,14 @@ impl Lp5562 {
         Ok(())
     }
 
-    pub fn set_led_current<I2C>(
+    pub fn set_led_current<I>(
         &self,
-        i2c: &mut I2C,
+        i2c: &mut I,
         led: LED,
         value: u8,
-    ) -> Result<(), <I2C as Write>::Error>
+    ) -> Result<(), Error<I::Error>>
     where
-        I2C: Write,
+        I: Write,
     {
         match led {
             LED::Blue => self.write_addr(i2c, Register::Bcurrent, value)?,
@@ -136,12 +146,12 @@ impl Lp5562 {
         Ok(())
     }
 
-    pub fn init_direct_pwm<I2C>(
+    pub fn init_direct_pwm<I>(
         &self,
-        i2c: &mut I2C,
-    ) -> Result<(), <I2C as Write>::Error>
+        i2c: &mut I,
+    ) -> Result<(), Error<I::Error>>
     where
-        I2C: Write,
+        I: Write,
     {
         // chip enable
         self.write_addr(i2c, Register::Enable, 0b01000000)?;
