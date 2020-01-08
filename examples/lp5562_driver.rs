@@ -3,6 +3,7 @@
 #![no_main]
 #![no_std]
 
+use embedded_hal::blocking::delay::DelayMs;
 use embedded_hal::blocking::i2c::Write;
 use embedded_hal::digital::v2::OutputPin;
 
@@ -23,31 +24,23 @@ fn main() -> ! {
     // the RCC register.
     let gpiob = dp.GPIOB.split(&mut rcc);
 
+    // Init GPIO for Enable Line
     let mut lp5562_en = gpiob.pb14.into_push_pull_output();
 
     // Get the delay provider.
     let mut delay = cp.SYST.delay(rcc.clocks);
 
+    // Init I2C
     let scl = gpiob.pb8.into_open_drain_output();
     let sda = gpiob.pb9.into_open_drain_output();
-
     let mut i2c = dp.I2C1.i2c(sda, scl, 100.khz(), &mut rcc);
 
+    // Init LP5562 Driver
     let led_driver = Lp5562::new(AddrSel::Addr00);
-
-    // 1 ms delay
-    delay.delay_ms(100_u16);
-
-    let _s = led_driver.init_direct_pwm(&mut i2c, &mut lp5562_en);
-
-    // 1 ms delay
-    delay.delay_ms(10_u16);
-
-    // led_driver.set_led_current(&mut i2c, LED::Blue, 0x00).unwrap();
+    let _s = led_driver.init_direct_pwm(&mut i2c, &mut lp5562_en, &mut delay);
     let _s = led_driver.set_led_pwm(&mut i2c, LED::Red, 0x0F);
 
-    loop {
-    }
+    loop {}
 }
 
 pub struct Lp5562 {
@@ -69,8 +62,9 @@ pub enum LED {
 }
 
 pub enum Error {
-    I2c,
+    I2C,
     GPIO,
+    DELAY,
 }
 
 impl Lp5562 {
@@ -80,25 +74,15 @@ impl Lp5562 {
         }
     }
 
-    pub fn write_addr<I>(
-        &self,
-        i2c: &mut I,
-        addr: Register,
-        value: u8,
-    ) -> Result<(), Error>
+    pub fn write_addr<I>(&self, i2c: &mut I, addr: Register, value: u8) -> Result<(), Error>
     where
         I: Write,
     {
         i2c.write(self.addr, &[addr as u8, value])
-            .map_err(|_| Error::I2c)
+            .map_err(|_| Error::I2C)
     }
 
-    pub fn set_led_pwm<I>(
-        &self,
-        i2c: &mut I,
-        led: LED,
-        value: u8,
-    ) -> Result<(), Error>
+    pub fn set_led_pwm<I>(&self, i2c: &mut I, led: LED, value: u8) -> Result<(), Error>
     where
         I: Write,
     {
@@ -112,12 +96,7 @@ impl Lp5562 {
         Ok(())
     }
 
-    pub fn set_led_current<I>(
-        &self,
-        i2c: &mut I,
-        led: LED,
-        value: u8,
-    ) -> Result<(), Error>
+    pub fn set_led_current<I>(&self, i2c: &mut I, led: LED, value: u8) -> Result<(), Error>
     where
         I: Write,
     {
@@ -131,20 +110,26 @@ impl Lp5562 {
         Ok(())
     }
 
-    pub fn init_direct_pwm<I, G>(
+    pub fn init_direct_pwm<I, G, D>(
         &self,
         i2c: &mut I,
         enable: &mut G,
+        delay: &mut D,
     ) -> Result<(), Error>
     where
         I: Write,
-        G: OutputPin, 
+        G: OutputPin,
+        D: DelayMs<u16>,
     {
         // set EN pin high
         enable.set_high().map_err(|_| Error::GPIO)?;
+        // 1 ms delay
+        delay.delay_ms(1_u16);
         // chip enable
         self.write_addr(i2c, Register::Enable, 0b01000000)?;
-        // enable internal clock 
+        // 1 ms delay
+        delay.delay_ms(1_u16);
+        // enable internal clock
         self.write_addr(i2c, Register::Config, 0b00000001)?;
         // configure all LED outputs to be ontrolled from i2c registers
         self.write_addr(i2c, Register::LedMap, 0b00000000)?;
