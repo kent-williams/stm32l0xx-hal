@@ -3,7 +3,8 @@
 #![no_main]
 #![no_std]
 
-use embedded_hal::blocking::i2c::{Write};
+use embedded_hal::blocking::i2c::Write;
+use embedded_hal::digital::v2::OutputPin;
 
 extern crate panic_semihosting;
 
@@ -32,23 +33,12 @@ fn main() -> ! {
 
     let mut i2c = dp.I2C1.i2c(sda, scl, 100.khz(), &mut rcc);
 
-    // let mut buffer: [u8; 2];// = [0u8; 2];
-
-    // const LP5562_ADDR: u8 = 0x30;
-
     let led_driver = Lp5562::new(AddrSel::Addr00);
-
-    // Set EN High
-    lp5562_en.set_high().unwrap();
 
     // 1 ms delay
     delay.delay_ms(100_u16);
 
-    // buffer = [Register::Enable as u8, 0b01000000];
-    // chip_en = 1
-    // i2c.write(LP5562_ADDR, &mut buffer).unwrap();
-
-   let _s = led_driver.init_direct_pwm(&mut i2c);
+    let _s = led_driver.init_direct_pwm(&mut i2c, &mut lp5562_en);
 
     // 1 ms delay
     delay.delay_ms(10_u16);
@@ -78,15 +68,10 @@ pub enum LED {
     White,
 }
 
-pub enum Error<I> {
-    I2c(I),
+pub enum Error {
+    I2c,
+    GPIO,
 }
-
-// impl fmt::Debug for Error {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "({:?}, {:?})", self.longitude, self.latitude)
-//     }
-// }
 
 impl Lp5562 {
     pub fn new(addrsel: AddrSel) -> Lp5562 {
@@ -100,12 +85,12 @@ impl Lp5562 {
         i2c: &mut I,
         addr: Register,
         value: u8,
-    ) -> Result<(), Error<I::Error>>
+    ) -> Result<(), Error>
     where
         I: Write,
     {
         i2c.write(self.addr, &[addr as u8, value])
-            .map_err(|e| Error::I2c(e))
+            .map_err(|_| Error::I2c)
     }
 
     pub fn set_led_pwm<I>(
@@ -113,7 +98,7 @@ impl Lp5562 {
         i2c: &mut I,
         led: LED,
         value: u8,
-    ) -> Result<(), Error<I::Error>>
+    ) -> Result<(), Error>
     where
         I: Write,
     {
@@ -132,7 +117,7 @@ impl Lp5562 {
         i2c: &mut I,
         led: LED,
         value: u8,
-    ) -> Result<(), Error<I::Error>>
+    ) -> Result<(), Error>
     where
         I: Write,
     {
@@ -146,13 +131,17 @@ impl Lp5562 {
         Ok(())
     }
 
-    pub fn init_direct_pwm<I>(
+    pub fn init_direct_pwm<I, G>(
         &self,
         i2c: &mut I,
-    ) -> Result<(), Error<I::Error>>
+        enable: &mut G,
+    ) -> Result<(), Error>
     where
         I: Write,
+        G: OutputPin, 
     {
+        // set EN pin high
+        enable.set_high().map_err(|_| Error::GPIO)?;
         // chip enable
         self.write_addr(i2c, Register::Enable, 0b01000000)?;
         // enable internal clock 
@@ -160,7 +149,7 @@ impl Lp5562 {
         // configure all LED outputs to be ontrolled from i2c registers
         self.write_addr(i2c, Register::LedMap, 0b00000000)?;
 
-        // Set all LED PWM to zero
+        // set all LED PWM to zero
         self.write_addr(i2c, Register::Bpwm, 0x00)?;
         self.write_addr(i2c, Register::Gpwm, 0x00)?;
         self.write_addr(i2c, Register::Rpwm, 0x00)?;
